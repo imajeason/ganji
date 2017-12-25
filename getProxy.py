@@ -3,14 +3,20 @@
 __author__ = 'jerry'
 
 import re
-import sys,os,time
+import time
 import socket
 import socks
 import requests
-from splinter import Browser
-from pyvirtualdisplay import Display
-
-from main import detailinfo,errorurl,iproxy
+import re, time
+import  urllib2
+from multiprocessing.dummy import Pool as ThreadPool
+import getopt
+import sys
+from bs4 import BeautifulSoup
+from utils.cmd import kill_crawler
+from main import iproxy
+reload(sys)
+sys.setdefaultencoding('utf-8')
 
 # 此处修改伪造的头字段,
 headers = {
@@ -23,26 +29,23 @@ headers = {
 	"referer" : '123.123.123.123'#随意的伪造值
 }
 
-
 #发起请求,
 def get_request(url,headers):
     '''参数引入及头信息'''
-    socks.set_default_proxy(socks.SOCKS5, "192.168.199.135", 1080)
+    socks.set_default_proxy(socks.SOCKS5, "192.168.199.190", 1080)
     socket.socket = socks.socksocket
-    html=requests.get(url,headers=headers, timeout=30).text
+    html = requests.get(url,headers=headers, timeout=30).text
     #	print html
+    socks.set_default_proxy()
     return html
 
 
 # 将页面源代码正则匹配并解析,返回列表,其中每一项是json的数据
 def re_html_code(html_code,proxy_list_json):
-
     re_str = '(?<=insertPrx\().*\}'
     proxy_list = re.findall(re_str,html_code)
     null = ''
-
 #{'PROXY_STATUS': 'OK', 'PROXY_CITY': '', 'PROXY_TIME': '548', 'PROXY_STATE': '', 'PROXY_REFS': '', 'PROXY_TYPE': 'Transparent', 'PROXY_COUNTRY': 'China', 'PROXY_LAST_UPDATE': '1 59', 'PROXY_UPTIMELD': '105/16', 'PROXY_UID': '', 'PROXY_PORT': '1F90', 'PROXY_IP': '61.158.173.14'}
-
     for i in proxy_list:
         json_list = eval(i)
 
@@ -57,133 +60,167 @@ def re_html_code(html_code,proxy_list_json):
         proxy_status = '1'
         Remarks = 'ly'
         # `id`, `proxy_ip`, `proxy_port`, `proxy_country`, `proxy_type`, `addtime`, `Last_test_time`, `proxy_status`, `Remarks`
-
         list_i = [PROXY_IP,PROXY_PORT,PROXY_COUNTRY,PROXY_TYPE,addtime,Last_test_time,proxy_status,Remarks]
-
         proxy_list_json.append(list_i)
-
 #    print proxy_list_json
     return proxy_list_json
 
-print(iproxy.find().count())
+def checkProxy(sproxy):
+    urltest = "http://weixin.ninev.cn/test"
+    ip, port = sproxy.split(":")
 
-if __name__ == '__main__':
+    proxy = urllib2.ProxyHandler({'http': sproxy})
+    opener = urllib2.build_opener(proxy)
+    urllib2.install_opener(opener)
+    try:
+        response = urllib2.urlopen(urltest,timeout = 20)
+        content = response.read()
 
-    proxy_list = [
-        '125.88.74.122:83',
-        '113.18.193.5:8080',
-        '120.92.3.127:90',
-        '113.239.47.106:8998',
-        '119.5.0.58:808',
-        '111.23.10.98:80',
-        '111.23.10.112:8080',
-        '111.23.10.43:80',
-        '111.23.10.11:80',
-        '111.23.10.202:8080',
-        '111.23.10.17:80',
-        '111.23.10.28:8080',
-        '175.155.24.122:808',
-        '175.155.214.89:808',
-        '175.155.25.18:808',
-        '111.23.10.26:8080',
-        '42.59.111.148:808',
-        '60.184.173.63:808',
-        '118.89.53.148:3128',
-        '183.95.80.165:8080',
-        '101.64.199.168:8998',
-        '113.207.43.166:8080',
-        '183.62.196.10:3128',
-        '110.187.31.190:808',
-        '113.121.20.84:808',
-        '115.50.187.84:8998',
-        '116.16.52.112:8998',
-    ]
-    for ii in proxy_list:
-        contentList = {}
-        sproxy = ii
-        # proxy_list.append(proxy)
-        content = iproxy.find_one({"iproxy": sproxy})
-        contentList["iproxy"] = sproxy
-        contentList["status"] = 0
-        if content:
-            print "%s already in db." % sproxy
-        else:
-            iproxy.insert_one(contentList)
-            print "%s insert sucessfully." % sproxy
-            # print i
-            # insert_ll(install_str,i,conn,cur)
+        # soup = BeautifulSoup(content, features="lxml")
+        # tag1 = soup.find(name='h2')
+    except:
+        #print "open error."
+        return sproxy,False
+    print ip,content
 
-    country = ['China']
-    #country = ['China','Indonesia','United%20States','Russia','Thailand','India','Taiwan','Japan','France','Iran','Bangladesh','Poland','Romania','Venezuela','Germany','Ukraine','Argentina','Mexico','Australia','Colombia']
+    if ip == content:
+        return sproxy,True
+    else:
+        return sproxy,False
 
+def checkProxys():
+    #proxy_list = iproxy.find()
+    proxy_list = iproxy.find({"status":0})
+    print "现有代理数量：",iproxy.find({"status":0}).count()
 
+    pool = ThreadPool(processes=8)
+    results = []
+    count = 0
+    for proxy in proxy_list:
+        if count > 40:break
 
-    for name in country:
-        url = "http://www.gatherproxy.com/zh/proxylist/country/?c="+name
+        proxy = proxy["iproxy"]
+        result = pool.apply_async(checkProxy, args=(proxy,))
+        results.append(result)
+        count += 1
+        # print "proxy:",proxy
 
-        html_code = get_request(url,headers)
+    # pool.join()  # 调用join之前，先调用close函数，否则会出错。执行完close后不会有新的进程加入到pool,join函数等待所有子进程结束
+    for i in results:
+        i.wait()  # 等待线程函数执行完毕
+
+    for i in results:
+        if i.ready():  # 线程函数是否已经启动了
+            if i.successful():  # 线程函数是否执行成功
+                contentList = {}
+
+                sproxy, res = i.get()
+                # print sproxy,res
+                contentList["iproxy"] = sproxy
+
+                if res:
+                    print "%s is ok!" % sproxy
+
+                    iproxy.remove(contentList)
+                    contentList["status"] = 0
+                    iproxy.insert_one(contentList)
+                else:
+
+                    print "%s is bad!" % sproxy
+                    time.sleep(0.1)
+                    iproxy.delete_one(contentList)
+
+    print "Sub-process(es) done."
+
+    # get pages url
+
+    print "现有代理数量：", iproxy.find({"status": 0}).count()
+
+def getProxy(countries = ['China']):
+    global iproxy
+    print "现有代理数量：", iproxy.find({"status": 0}).count()
+    if iproxy.find({"status": 0}).count() > 50:return True
+
+    # 此处修改伪造的头字段,
+
+    # country = ['China','Indonesia','United%20States','Russia','Thailand','India','Taiwan','Japan','France','Iran','Bangladesh','Poland','Romania','Venezuela','Germany','Ukraine','Argentina','Mexico','Australia','Colombia']
+    for name in countries:
+        url = "http://www.gatherproxy.com/zh/proxylist/country/?c=" + name
+        html_code = get_request(url, headers)
+        proxy_list = []
         proxy_list_json = []
-        proxy_list = {}
-        now_url = url
-        proxy_list_json = re_html_code(html_code,proxy_list_json)
-        urltest = "http://bj.ganji.com/"
-        for i in proxy_list_json:
+        proxy_list_json = re_html_code(html_code, proxy_list_json)
 
-            display = Display(visible=0, size=(800, 800))
-            display.start()
+        for i in proxy_list_json:
             contentList = {}
             # list_i = [PROXY_IP, PROXY_PORT, PROXY_COUNTRY, PROXY_TYPE, addtime, Last_test_time,proxy_status, Remarks]
-            sproxy = "%s:%s" % (i[0], i[1])
+            ip, port = i[0], str(i[1])
+            sproxy = "%s:%s" % (ip, port)
 
-            ip,port = i[0], str(i[1])
-            print ("代理:%s:%s，正在处理%s" % (i[0], i[1], urltest))
-            print type(i[0]),type(i[1])
-
-            proxy_settings = {'network.proxy.type': 1,
-                              'network.proxy.no_proxies_on': '172.0.0.0/8,10.0.0.0/8,localhost,127.0.0.0/8,::1',
-                              'network.proxy.http': ip, 'network.proxy.http_port': port,
-                              'network.proxy.ssl': '172.1.1.1', 'network.proxy.ssl_port': 8080}
-
-            # browser = Browser(driver_name="firefox")
-            browser = Browser(driver_name="firefox", profile_preferences=proxy_settings,timeout=40)
-            browser.visit(urltest)
-
-            try:
-                browser.quit()
-            except:
-                pass
-
-            display.stop()
-
-            contentList = {}
-            # browser.execute_script(clickLog('m-my_login_login_tab'))
-            title = browser.title
-            print "test baidu success:%s"%(title.encode('utf-8'))
-            # proxy_list.append(proxy)
-            content = iproxy.find_one({"iproxy": sproxy})
             contentList["iproxy"] = sproxy.encode("utf-8")
-            contentList["status"] = 0
-            if content:
-                print "%s already in db." % sproxy
-            else:
-                #iproxy.insert_one(contentList)
-                print "%s insert sucessfully." % sproxy
+            proxy_list.append(contentList["iproxy"])
 
 
+        print "待处理代理数量：",len(proxy_list)
+
+        pool = ThreadPool(processes=8)
+        results = []
+
+        for proxy in proxy_list:
+
+            result = pool.apply_async(checkProxy, args=(proxy,))
+            results.append(result)
+            #print "proxy:",proxy
+
+        # pool.join()  # 调用join之前，先调用close函数，否则会出错。执行完close后不会有新的进程加入到pool,join函数等待所有子进程结束
+        for i in results:
+            i.wait()  # 等待线程函数执行完毕
+
+        for i in results:
+            if i.ready():  # 线程函数是否已经启动了
+                if i.successful():  # 线程函数是否执行成功
+                    contentList = {}
 
 
+                    sproxy,res = i.get()
+                    #print sproxy,res
+                    contentList["iproxy"] = sproxy
 
-"""
-var res=db.iproxy.find();  
-while(res.hasNext()){  
-      var res1=db.iproxy.find();   
-      var re=res.next();  
-      while(res1.hasNext()){  
-              var re1=res1.next();  
-              if(re.iproxy==re1.iproxy){   
-                   db.iproxy.remove({"iproxy":re1.iproxy});   
-               }  
-       }   
-       db.iproxy.insert(re);   
-}  
-"""
+
+                    if res:
+                        print "%s is ok!" % sproxy
+                        iproxy.remove(contentList)
+                        contentList["status"] = 0
+                        iproxy.insert_one(contentList)
+                    else:
+
+                        print "%s is bad!" % sproxy
+
+        print "Sub-process(es) done."
+
+    print "现有代理数量：", iproxy.find({"status": 0}).count()
+
+if __name__ == '__main__':
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "rhgca")
+    except getopt.GetoptError:
+        print 'test.py -g -c'
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt == '-h':
+            print 'help test.py -g -c'
+            sys.exit()
+        elif opt in ("-c", "--check"):
+            checkProxys()
+        elif opt in ("-r", "--renew"):
+            checkProxys()
+        elif opt in ("-g", "--get"):
+            countries = ['China']
+            getProxy(countries)
+        elif opt in ("-a", "--all"):
+            print "get & check"
+            kill_crawler()
+            countries = ['China']
+            getProxy(countries)
+            checkProxys()
+
